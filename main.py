@@ -31,21 +31,24 @@ def log(msg):
     print(f"[{ts}] {msg}", flush=True)
 
 def send_tg_message(text):
-    log(f"[TG Log] {text}")
+    # 为 Telegram 消息统一加上 PGSS 前缀
+    formatted_text = f"PGSS {text}"
+    log(f"[TG Log] {formatted_text}")
     if not TG_BOT_TOKEN or not TG_CHAT_ID:
         return
     url = f"https://api.telegram.org/bot{TG_BOT_TOKEN}/sendMessage"
-    payload = {"chat_id": TG_CHAT_ID, "text": text, "parse_mode": "HTML"}
+    payload = {"chat_id": TG_CHAT_ID, "text": formatted_text, "parse_mode": "HTML"}
     try:
         requests.post(url, json=payload, timeout=10)
     except Exception as e:
         print(f"[警告] TG 消息发送失败: {e}")
 
 def send_tg_photo(photo_path, caption=""):
+    formatted_caption = f"PGSS {caption}" if caption else "PGSS"
     if not TG_BOT_TOKEN or not TG_CHAT_ID or not os.path.exists(photo_path):
         return
     url = f"https://api.telegram.org/bot{TG_BOT_TOKEN}/sendPhoto"
-    data = {"chat_id": TG_CHAT_ID, "caption": caption}
+    data = {"chat_id": TG_CHAT_ID, "caption": formatted_caption}
     try:
         with open(photo_path, "rb") as photo:
             requests.post(url, data=data, files={"photo": photo}, timeout=15)
@@ -76,7 +79,7 @@ def do_exchange():
         sys.exit(1)
 
     domain = urllib.parse.urlparse(TARGET_URL).hostname
-    send_tg_message(f"🚀 <b>[Actions 启动]</b> 准备前往页面执行兑换:\n<code>{TARGET_URL}</code>")
+    send_tg_message("🚀 <b>[Actions 启动]</b> 准备执行兑换流程...")
 
     with sync_playwright() as pw:
         browser = pw.chromium.launch(
@@ -173,7 +176,7 @@ def do_exchange():
                         break
 
             if not lv_url:
-                send_tg_message("❌ 点击后未能抓取到 Linkvertise 目标链接！")
+                send_tg_message("❌ 点击后未能抓取到目标链接！")
                 shot = "no_lv_url.png"
                 page.screenshot(path=shot)
                 send_tg_photo(shot, "🚨 抓包失败时的截图")
@@ -182,17 +185,17 @@ def do_exchange():
             # 5. Base64 解码并访问最终页面
             dest = decode_from_linkvertise(lv_url)
             if not dest:
-                send_tg_message(f"❌ 捕获到链接 <code>{lv_url}</code>，但 Base64 解码失败！")
+                send_tg_message("❌ 捕获到目标链接，但 Base64 解码失败！")
                 sys.exit(1)
 
-            send_tg_message(f"🌐 成功解密目标链接，正在访问:\n<code>{dest}</code>")
+            send_tg_message("🌐 成功解密目标链接，正在访问...")
             try:
                 page.goto(dest, timeout=NAV_TIMEOUT, wait_until="domcontentloaded")
             except Exception:
                 pass
             time.sleep(3)
 
-            # 发送成功截图
+            # 发送成功截图与结束提示
             shot = "success.png"
             page.screenshot(path=shot)
             send_tg_photo(shot, "📸 兑换完成后的页面截图")
