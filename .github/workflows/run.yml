@@ -32,6 +32,7 @@ jobs:
         env:
           BASE_URL: ${{ secrets.BASE_URL }}
           COOKIE_SID: ${{ secrets.COOKIE_SID }}
+          COOKIE_NAME: ${{ secrets.COOKIE_NAME }}
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
         run: |
