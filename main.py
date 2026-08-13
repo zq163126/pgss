@@ -1,11 +1,18 @@
+#!/usr/bin/env python3
 import os
 import sys
+import json
 import time
+import re
+import base64
+import urllib.parse
+from datetime import datetime, timezone, timedelta
 import requests
-from urllib.parse import urlparse
 from playwright.sync_api import sync_playwright
 
-# 1. 严格从环境变量读取配置，直接使用完整地址
+# ============================================================
+# 🎯 配置区 (完全由 GitHub Secrets / 环境变量控制)
+# ============================================================
 TARGET_URL = os.environ.get("BASE_URL", "").strip()
 COOKIE_SID = os.environ.get("COOKIE_SID", "").strip()
 COOKIE_NAME = os.environ.get("COOKIE_NAME", "").strip()
@@ -13,128 +20,189 @@ COOKIE_NAME = os.environ.get("COOKIE_NAME", "").strip()
 TG_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN", "").strip()
 TG_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID", "").strip()
 
-# Telegram 消息推送辅助函数
+NAV_TIMEOUT = 30000
+SHA_TZ = timezone(timedelta(hours=8))
+
+# ============================================================
+# 📢 工具函数
+# ============================================================
+def log(msg):
+    ts = datetime.now(SHA_TZ).strftime("%Y-%m-%d %H:%M:%S")
+    print(f"[{ts}] {msg}", flush=True)
+
 def send_tg_message(text):
-    print(f"[LOG] {text}")
+    log(f"[TG Log] {text}")
     if not TG_BOT_TOKEN or not TG_CHAT_ID:
         return
     url = f"https://api.telegram.org/bot{TG_BOT_TOKEN}/sendMessage"
-    payload = {
-        "chat_id": TG_CHAT_ID,
-        "text": text,
-        "parse_mode": "HTML"
-    }
+    payload = {"chat_id": TG_CHAT_ID, "text": text, "parse_mode": "HTML"}
     try:
         requests.post(url, json=payload, timeout=10)
     except Exception as e:
-        print(f"[警告] TG 文本消息发送失败: {e}")
+        print(f"[警告] TG 消息发送失败: {e}")
 
-# Telegram 截图推送辅助函数
 def send_tg_photo(photo_path, caption=""):
-    if not TG_BOT_TOKEN or not TG_CHAT_ID:
-        return
-    if not os.path.exists(photo_path):
+    if not TG_BOT_TOKEN or not TG_CHAT_ID or not os.path.exists(photo_path):
         return
     url = f"https://api.telegram.org/bot{TG_BOT_TOKEN}/sendPhoto"
     data = {"chat_id": TG_CHAT_ID, "caption": caption}
     try:
         with open(photo_path, "rb") as photo:
-            files = {"photo": photo}
-            requests.post(url, data=data, files=files, timeout=15)
+            requests.post(url, data=data, files={"photo": photo}, timeout=15)
     except Exception as e:
         print(f"[警告] TG 截图发送失败: {e}")
 
-def run():
-    # 严格校验环境变量
+def decode_from_linkvertise(url):
+    m = re.search(r'[?&]r=([^&]+)', url)
+    if not m:
+        return None
+    try:
+        return base64.b64decode(urllib.parse.unquote(m.group(1))).decode()
+    except Exception:
+        return None
+
+# ============================================================
+# 🚀 纯粹兑换动作执行
+# ============================================================
+def do_exchange():
     if not TARGET_URL:
-        msg = "❌ [程序终止] 缺失 BASE_URL 环境变量！"
-        send_tg_message(msg)
+        send_tg_message("❌ [程序终止] 缺失 BASE_URL 环境变量！")
+        sys.exit(1)
+    if not COOKIE_SID:
+        send_tg_message("❌ [程序终止] 缺失 COOKIE_SID 环境变量！")
+        sys.exit(1)
+    if not COOKIE_NAME:
+        send_tg_message("❌ [程序终止] 缺失 COOKIE_NAME 环境变量！")
         sys.exit(1)
 
-    if not COOKIE_SID or not COOKIE_NAME:
-        msg = "❌ [程序终止] 缺失 COOKIE_SID 或 COOKIE_NAME 环境变量！"
-        send_tg_message(msg)
-        sys.exit(1)
+    domain = urllib.parse.urlparse(TARGET_URL).hostname
+    send_tg_message(f"🚀 <b>[Actions 启动]</b> 准备前往页面执行兑换:\n<code>{TARGET_URL}</code>")
 
-    # 自动提炼域名给 Cookie 校验使用
-    domain = urlparse(TARGET_URL).hostname
-
-    send_tg_message(f"🚀 <b>[自动化流程]</b> GitHub Actions 已启动\n🎯 目标网址: <code>{TARGET_URL}</code>")
-
-    with sync_playwright() as p:
-        browser = p.chromium.launch(
+    with sync_playwright() as pw:
+        browser = pw.chromium.launch(
             headless=True,
-            args=[
-                "--no-sandbox",
-                "--disable-setuid-sandbox",
-                "--disable-dev-shm-usage",
-                "--disable-blink-features=AutomationControlled"
-            ]
+            args=["--no-sandbox", "--disable-dev-shm-usage", "--disable-blink-features=AutomationControlled"]
         )
-        
         context = browser.new_context(
-            user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36"
+            viewport={"width": 1280, "height": 720},
+            user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
         )
-        
-        # 注入 Cookie
+
+        # 动态读取并注入 Cookie
         context.add_cookies([{
             "name": COOKIE_NAME,
             "value": COOKIE_SID,
-            "domain": domain,
-            "path": "/"
+            "domain": f".{domain}" if not domain.startswith(".") else domain,
+            "path": "/",
+            "httpOnly": True,
+            "secure": True
         }])
 
         page = context.new_page()
-        page.set_default_timeout(15000)
 
         try:
-            # 步骤 1：直接打开完整的目标页面
-            print(f"[Playwright] 正在访问地址: {TARGET_URL}")
-            send_tg_message(f"🌐 <b>步骤 1/3</b>：正在打开页面 <code>{TARGET_URL}</code>...")
-            page.goto(TARGET_URL, wait_until="networkidle")
-            time.sleep(2)
+            # 1. 打开目标页面
+            log(f"正在前往兑换页面: {TARGET_URL}")
+            page.goto(TARGET_URL, timeout=NAV_TIMEOUT, wait_until="domcontentloaded")
+            time.sleep(3)
 
-            # 保存并发送“已加载完成”的截图
-            step1_shot = "step1_loaded.png"
-            page.screenshot(path=step1_shot)
-            send_tg_photo(step1_shot, f"📸 [页面截图] 打开 {TARGET_URL} 加载完毕")
+            # 2. 定位按钮 #genBtn
+            gen_btn = page.locator("#genBtn")
+            if not gen_btn.is_visible(timeout=5000):
+                send_tg_message("⚠️ 页面未找到 <code>#genBtn</code> 兑换按钮！")
+                shot = "no_genbtn.png"
+                page.screenshot(path=shot)
+                send_tg_photo(shot, "🚨 未找到按钮时的截图")
+                sys.exit(1)
 
-            # 步骤 2：寻找按钮并双击
-            send_tg_message("🔍 <b>步骤 2/3</b>：寻找触发按钮，准备双击...")
-            button_selector = "button:has-text('兑换'), button:has-text('Redeem'), .btn-primary, #redeem-btn"
+            captured_lv_url = []
 
-            if page.is_visible(button_selector):
-                button = page.locator(button_selector).first
-                button.dblclick()
-            else:
-                page.dblclick("text=/兑换|Redeem/i")
+            # 3. 监听抓包请求
+            def handle_request(request):
+                if "chargebee.com/api/internal/kvl" in request.url and request.method == "POST":
+                    try:
+                        post_data = request.post_data
+                        if post_data:
+                            data_json = json.loads(post_data)
+                            target_url = data_json.get("data", {}).get("site_meta_window_url")
+                            if target_url and "linkvertise.com" in target_url:
+                                log(f"🎯 [精准捕获] Linkvertise 链接: {target_url}")
+                                captured_lv_url.append(target_url)
+                    except Exception as e:
+                        log(f"⚠️ 抓包解析异常: {e}")
 
-            send_tg_message("⚡ <b>步骤 3/3</b>：已完成双击，等待页面响应...")
-            time.sleep(5)
+            page.on("request", handle_request)
 
-            # 保存并发送“双击后”的最终状态截图
-            step2_shot = "step2_result.png"
-            page.screenshot(path=step2_shot)
-            send_tg_photo(step2_shot, "📸 [页面截图] 双击操作完毕后的页面状态")
+            existing_pages = len(context.pages)
+            gen_btn.click()
+            send_tg_message("🖱️ 已点击 <code>#genBtn</code>，等待抓包/页面响应...")
 
-            send_tg_message("✅ <b>[自动化流程]</b> 任务正常执行完毕！")
+            # 4. 等待捕获链接
+            lv_url = None
+            for _ in range(10):
+                if captured_lv_url:
+                    lv_url = captured_lv_url[0]
+                    break
+                time.sleep(1)
 
-        except Exception as e:
-            err_msg = f"❌ <b>[自动化流程] 运行出错/超时</b>:\n<code>{str(e)}</code>"
-            send_tg_message(err_msg)
+            page.remove_listener("request", handle_request)
 
-            # 截图保存异常现场
-            error_shot = "error_field.png"
+            # 兜底捕获：如果抓包没捕获到，检测弹出的新窗口
+            if not lv_url:
+                try:
+                    np = context.wait_for_event('page', timeout=3000)
+                    np.wait_for_load_state("domcontentloaded", timeout=3000)
+                    if "linkvertise.com" in np.url:
+                        lv_url = np.url
+                    np.close()
+                except Exception:
+                    pass
+
+            if not lv_url:
+                for _ in range(5):
+                    time.sleep(1)
+                    pages = context.pages
+                    if len(pages) > existing_pages:
+                        np = pages[-1]
+                        if "linkvertise.com" in np.url:
+                            lv_url = np.url
+                        np.close()
+                        break
+                    if "linkvertise.com" in page.url:
+                        lv_url = page.url
+                        break
+
+            if not lv_url:
+                send_tg_message("❌ 点击后未能抓取到 Linkvertise 目标链接！")
+                shot = "no_lv_url.png"
+                page.screenshot(path=shot)
+                send_tg_photo(shot, "🚨 抓包失败时的截图")
+                sys.exit(1)
+
+            # 5. Base64 解码并访问最终页面
+            dest = decode_from_linkvertise(lv_url)
+            if not dest:
+                send_tg_message(f"❌ 捕获到链接 <code>{lv_url}</code>，但 Base64 解码失败！")
+                sys.exit(1)
+
+            send_tg_message(f"🌐 成功解密目标链接，正在访问:\n<code>{dest}</code>")
             try:
-                page.screenshot(path=error_shot)
-                send_tg_photo(error_shot, "🚨 [异常截图] 出错时的现场画面")
+                page.goto(dest, timeout=NAV_TIMEOUT, wait_until="domcontentloaded")
             except Exception:
                 pass
-            
-            sys.exit(1)
+            time.sleep(3)
 
+            # 发送成功截图
+            shot = "success.png"
+            page.screenshot(path=shot)
+            send_tg_photo(shot, "📸 兑换完成后的页面截图")
+            send_tg_message("🎉 <b>[兑换流程结束]</b> 任务成功完成！")
+
+        except Exception as e:
+            send_tg_message(f"❌ <b>[运行异常]</b>:\n<code>{str(e)}</code>")
+            sys.exit(1)
         finally:
             browser.close()
 
 if __name__ == "__main__":
-    run()
+    do_exchange()
