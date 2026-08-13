@@ -4,13 +4,13 @@ import time
 import requests
 from playwright.sync_api import sync_playwright
 
-# 1. 严格从环境变量读取配置，不保留任何明文地址或敏感 Cookie 键名
-BASE_URL = os.environ.get("BASE_URL", "").rstrip("/")
-COOKIE_SID = os.environ.get("COOKIE_SID", "")
-COOKIE_NAME = os.environ.get("COOKIE_NAME", "pingless.sid") # 支持通过环境变量动态设置 Cookie Key
+# 1. 从环境变量读取配置
+BASE_URL = os.environ.get("BASE_URL", "").strip().rstrip("/")
+COOKIE_SID = os.environ.get("COOKIE_SID", "").strip()
+COOKIE_NAME = os.environ.get("COOKIE_NAME", "pingless.sid").strip()
 
-TG_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN", "")
-TG_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID", "")
+TG_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN", "").strip()
+TG_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID", "").strip()
 
 # Telegram 消息推送辅助函数
 def send_tg_message(text):
@@ -55,7 +55,13 @@ def run():
         send_tg_message(msg)
         sys.exit(1)
 
-    send_tg_message("🚀 <b>[自动化流程]</b> GitHub Actions 已经启动，正在初始化浏览器...")
+    # 规范化目标 URL，自动防止重复拼接 /lv
+    if BASE_URL.endswith("/lv"):
+        target_url = BASE_URL
+    else:
+        target_url = f"{BASE_URL}/lv"
+
+    send_tg_message(f"🚀 <b>[自动化流程]</b> GitHub Actions 已启动\n🎯 目标网址: <code>{target_url}</code>")
 
     with sync_playwright() as p:
         browser = p.chromium.launch(
@@ -73,7 +79,7 @@ def run():
         )
         
         # 动态解析域名注入 Cookie
-        domain = BASE_URL.split("//")[-1].split(":")[0]
+        domain = BASE_URL.split("//")[-1].split(":")[0].split("/")[0]
         context.add_cookies([{
             "name": COOKIE_NAME,
             "value": COOKIE_SID,
@@ -86,15 +92,15 @@ def run():
 
         try:
             # 步骤 1：打开目标页面
-            target_url = f"{BASE_URL}/lv"
-            send_tg_message("🌐 <b>步骤 1/3</b>：正在打开目标页面...")
+            print(f"[Playwright] 正在访问完整地址: {target_url}")
+            send_tg_message(f"🌐 <b>步骤 1/3</b>：正在打开页面 <code>{target_url}</code>...")
             page.goto(target_url, wait_until="networkidle")
             time.sleep(2)
 
             # 保存并发送“已加载完成”的截图
             step1_shot = "step1_loaded.png"
             page.screenshot(path=step1_shot)
-            send_tg_photo(step1_shot, "📸 [页面截图] 页面加载完毕")
+            send_tg_photo(step1_shot, f"📸 [页面截图] 打开 {target_url} 加载完毕")
 
             # 步骤 2：寻找按钮并双击
             send_tg_message("🔍 <b>步骤 2/3</b>：寻找触发按钮，准备双击...")
