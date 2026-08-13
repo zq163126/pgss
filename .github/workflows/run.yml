@@ -1,19 +1,14 @@
 name: Run pgss Redeem Bot
 
 on:
-  workflow_dispatch:
-  repository_dispatch:
-    types: [trigger-pgss-run]
-#  schedule:
-    # 每 4 小时自动触发运行一次
- #   - cron: '0 */4 * * *'
+  workflow_dispatch: # 允许通过 API 或手动触发
 
 jobs:
-  run-bot:
+  run-redeem:
     runs-on: ubuntu-latest
 
     steps:
-      - name: 检出代码
+      - name: 检出仓库代码
         uses: actions/checkout@v4
 
       - name: 设置 Python 环境
@@ -21,14 +16,12 @@ jobs:
         with:
           python-version: '3.10'
 
-      - name: 安装依赖包
+      - name: 安装依赖与 Playwright 浏览器
         run: |
           python -m pip install --upgrade pip
-          pip install -r requirements.txt
-
-      - name: 安装 Playwright 浏览器内核
-        run: |
-          npx playwright install chromium --with-deps
+          pip install playwright
+          # 安装 Playwright 所需的浏览器内核及 Linux 系统依赖
+          playwright install --with-deps chromium
 
       - name: 启用 WARP 网络
         uses: fscarmen/warp-on-actions@v1.3
@@ -36,13 +29,9 @@ jobs:
           stack: dual
           mode: client
 
-      - name: 运行 pgss 自动兑换脚本
+      - name: 执行主程序
         env:
           BASE_URL: ${{ secrets.BASE_URL }}
           COOKIE_SID: ${{ secrets.COOKIE_SID }}
-          PROXY: ${{ secrets.PROXY }}
-          HEADED: "False"
-          SHOW_LOG: "True"
-          LOG_FILE: "pgss.log"
         run: |
           python main.py
